@@ -3,40 +3,26 @@ import pdfplumber
 from docx import Document
 import random
 
-# ===============================
-# FILES
-# ===============================
-
 PDF_FILE = "tiles.pdf"
 DOCX_FILE = "rules.docx"
 
 # ===============================
-# SAFE LOADERS (UTF-8 PROTECTED)
+# LOADERS
 # ===============================
-
-def normalize_latex(text):
-    text = text.strip()
-    if text.startswith("$"):
-        return text
-    return f"$${text}$$"
-
 
 def load_tiles_from_pdf(path):
     tiles = []
     with pdfplumber.open(path) as pdf:
         for page in pdf.pages:
-            try:
-                text = page.extract_text()
-            except Exception:
-                continue
+            text = page.extract_text()
             if not text:
                 continue
             lines = [l.strip() for l in text.split("\n") if l.strip()]
             for i in range(0, len(lines) - 1, 2):
                 tiles.append({
                     "id": len(tiles),
-                    "a": normalize_latex(lines[i]),
-                    "b": normalize_latex(lines[i + 1]),
+                    "a": lines[i],
+                    "b": lines[i + 1],
                     "orientation": "horizontal"
                 })
     return tiles
@@ -44,53 +30,7 @@ def load_tiles_from_pdf(path):
 
 def load_rules_from_docx(path):
     doc = Document(path)
-    rules = []
-    for p in doc.paragraphs:
-        try:
-            t = p.text.strip()
-            if t:
-                rules.append(t)
-        except Exception:
-            pass
-    return rules
-
-# ===============================
-# DOMINO RENDER
-# ===============================
-
-def render_domino(tile):
-    if tile["orientation"] == "horizontal":
-        html = f"""
-        <div style="display:flex;width:300px;height:130px;
-        border:2px solid black;border-radius:14px;background:white;
-        margin:10px;overflow:hidden;">
-            <div style="width:50%;border-right:2px solid black;
-            display:flex;align-items:center;justify-content:center;">
-                {tile['a']}
-            </div>
-            <div style="width:50%;
-            display:flex;align-items:center;justify-content:center;">
-                {tile['b']}
-            </div>
-        </div>
-        """
-    else:
-        html = f"""
-        <div style="display:flex;flex-direction:column;
-        width:150px;height:260px;
-        border:2px solid black;border-radius:14px;background:white;
-        margin:10px;overflow:hidden;">
-            <div style="height:50%;border-bottom:2px solid black;
-            display:flex;align-items:center;justify-content:center;">
-                {tile['a']}
-            </div>
-            <div style="height:50%;
-            display:flex;align-items:center;justify-content:center;">
-                {tile['b']}
-            </div>
-        </div>
-        """
-    st.markdown(html, unsafe_allow_html=True)
+    return [p.text.strip() for p in doc.paragraphs if p.text.strip()]
 
 # ===============================
 # GAME LOGIC
@@ -100,11 +40,30 @@ def is_valid_move(tile, last_tile):
     if last_tile is None:
         return True
     return (
-        tile["a"] == last_tile["a"] or
-        tile["a"] == last_tile["b"] or
-        tile["b"] == last_tile["a"] or
-        tile["b"] == last_tile["b"]
+        tile["a"] == last_tile["a"]
+        or tile["a"] == last_tile["b"]
+        or tile["b"] == last_tile["a"]
+        or tile["b"] == last_tile["b"]
     )
+
+# ===============================
+# DOMINO RENDER (STREAMLIT-NATIVE)
+# ===============================
+
+def render_domino(tile):
+    if tile["orientation"] == "horizontal":
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            st.container(border=True)
+            st.latex(tile["a"])
+        with c2:
+            st.container(border=True)
+            st.latex(tile["b"])
+    else:
+        st.container(border=True)
+        st.latex(tile["a"])
+        st.divider()
+        st.latex(tile["b"])
 
 # ===============================
 # STREAMLIT APP
@@ -151,8 +110,11 @@ with st.expander("📘 Game Rules"):
 # ---------- BOARD ----------
 
 st.subheader("🧠 Board")
-for t in st.session_state.board:
-    render_domino(t)
+if not st.session_state.board:
+    st.info("No tiles placed yet.")
+else:
+    for t in st.session_state.board:
+        render_domino(t)
 
 # ---------- CURRENT PLAYER ----------
 
@@ -161,49 +123,52 @@ player = st.session_state.players[current]
 
 st.subheader(f"🎮 Turn: {current}")
 
-# ---------- PLAYER HAND (ONLY VISIBLE HERE) ----------
+# ---------- CHECK IF PLAYER CAN PLAY ----------
+
+valid_indices = [
+    i for i, t in enumerate(player["hand"])
+    if is_valid_move(t, st.session_state.board[-1] if st.session_state.board else None)
+]
+
+if not valid_indices:
+    st.warning("No valid tiles available. Turn passes automatically.")
+    st.session_state.turn = (st.session_state.turn + 1) % len(st.session_state.order)
+    st.stop()
+
+# ---------- PLAYER HAND ----------
 
 for i, tile in enumerate(player["hand"]):
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        render_domino(tile)
-    with col2:
-        if st.button("Rotate", key=f"rot{i}"):
-            tile["orientation"] = (
-                "vertical" if tile["orientation"] == "horizontal"
-                else "horizontal"
-            )
+    st.markdown(f"**Tile {i+1}**")
+    render_domino(tile)
+
+    if st.button("Rotate", key=f"rot{i}"):
+        tile["orientation"] = (
+            "vertical" if tile["orientation"] == "horizontal"
+            else "horizontal"
+        )
 
 # ---------- PLAY ----------
 
-idx = st.selectbox(
-    "Select tile to play:",
-    range(len(player["hand"]))
-)
+idx = st.selectbox("Select tile:", valid_indices)
 
 justification = st.text_area(
     "✍️ Justify your move (conceptual explanation required):"
 )
 
 if st.button("Play tile"):
-    tile = player["hand"][idx]
-    last = st.session_state.board[-1] if st.session_state.board else None
-
     if not justification.strip():
         st.error("Justification is mandatory.")
         st.stop()
 
-    if is_valid_move(tile, last):
-        st.session_state.board.append(tile)
-        player["hand"].pop(idx)
-        player["score"] += 4
-        st.session_state.turn = (
-            st.session_state.turn + 1
-        ) % len(st.session_state.order)
-        st.success("✔ Valid move")
-    else:
-        player["score"] -= 2
-        st.error("✖ Invalid move")
+    tile = player["hand"].pop(idx)
+    st.session_state.board.append(tile)
+    player["score"] += 4
+
+    st.session_state.turn = (
+        st.session_state.turn + 1
+    ) % len(st.session_state.order)
+
+    st.success("✔ Move registered")
 
 # ---------- SCORES ----------
 
