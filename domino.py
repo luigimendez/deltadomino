@@ -5,46 +5,57 @@ import random
 import openai
 
 # ===============================
-# SAFE OPENAI CONFIG
-# ===============================
-
-if "OPENAI_API_KEY" not in st.secrets:
-    st.error(
-        "🔑 OPENAI_API_KEY not found.\n\n"
-        "Please add it in Streamlit Cloud → Manage app → Secrets."
-    )
-    st.stop()
-
-openai.api_key = st.secrets["OPENAI_API_KEY"]
-
-# ===============================
-# FILES
+# CONFIGURACIÓN GENERAL
 # ===============================
 
 PDF_FILE = "tiles.pdf"
 DOCX_FILE = "rules.docx"
 
 # ===============================
-# AI CONCEPT INFERENCE
+# MODO DUAL IA / NO IA
 # ===============================
 
-def infer_concept(latex_expr):
+USE_AI = True
+
+if "OPENAI_API_KEY" not in st.secrets:
+    USE_AI = False
+    st.warning(
+        "⚠️ OPENAI_API_KEY not found.\n"
+        "Running in non-AI mode (concepts inferred textually)."
+    )
+else:
+    openai.api_key = st.secrets["OPENAI_API_KEY"]
+
+# ===============================
+# IA: INFERENCIA DE CONCEPTOS
+# ===============================
+
+def infer_concept(expr):
+    """
+    Returns a conceptual label for a mathematical expression.
+    Uses AI if available, otherwise a deterministic fallback.
+    """
+
+    if not USE_AI:
+        # Fallback estable y reproducible
+        return expr.lower().strip()[:50]
+
     if "concept_cache" not in st.session_state:
         st.session_state.concept_cache = {}
 
-    if latex_expr in st.session_state.concept_cache:
-        return st.session_state.concept_cache[latex_expr]
+    if expr in st.session_state.concept_cache:
+        return st.session_state.concept_cache[expr]
 
     prompt = f"""
 You are a mathematics education expert.
-Given the following mathematical expression, return ONLY the main underlying concept
-as a single lowercase word or short phrase (no explanation).
+Given the following mathematical expression, return ONLY the
+main underlying mathematical concept as a short lowercase phrase.
 
 Expression:
-{latex_expr}
+{expr}
 
 Examples:
-derivative, limit, continuity, integral, chain rule, gradient, vector, series
+derivative, limit, continuity, chain rule, gradient, integral
 """
 
     response = openai.ChatCompletion.create(
@@ -54,11 +65,11 @@ derivative, limit, continuity, integral, chain rule, gradient, vector, series
     )
 
     concept = response.choices[0].message["content"].strip().lower()
-    st.session_state.concept_cache[latex_expr] = concept
+    st.session_state.concept_cache[expr] = concept
     return concept
 
 # ===============================
-# LOADERS
+# CARGA DE ARCHIVOS
 # ===============================
 
 def load_tiles_from_pdf(path):
@@ -88,12 +99,13 @@ def load_rules_from_docx(path):
     return [p.text.strip() for p in doc.paragraphs if p.text.strip()]
 
 # ===============================
-# GAME LOGIC
+# LÓGICA DEL JUEGO
 # ===============================
 
 def is_valid_move(tile, last_tile):
     if last_tile is None:
         return True
+
     return (
         tile["a_concept"] == last_tile["a_concept"]
         or tile["a_concept"] == last_tile["b_concept"]
@@ -102,7 +114,7 @@ def is_valid_move(tile, last_tile):
     )
 
 # ===============================
-# DOMINO RENDER (STREAMLIT NATIVE)
+# RENDER DE FICHA (STREAMLIT NATIVO)
 # ===============================
 
 def render_domino(tile):
@@ -124,8 +136,8 @@ def render_domino(tile):
 # STREAMLIT APP
 # ===============================
 
-st.set_page_config(page_title="Conceptual Domino (AI)", layout="centered")
-st.title("🧩 Conceptual Domino – AI-driven")
+st.set_page_config(page_title="Conceptual Domino", layout="centered")
+st.title("🧩 Conceptual Domino – Conceptual Matching")
 
 # ---------- SETUP ----------
 
@@ -171,30 +183,30 @@ else:
     for tile in st.session_state.board:
         render_domino(tile)
 
-# ---------- CURRENT TURN ----------
+# ---------- TURNO ACTUAL ----------
 
 current_player = st.session_state.player_order[st.session_state.turn_index]
-player_data = st.session_state.players[current_player]
+player = st.session_state.players[current_player]
 
 st.subheader(f"🎮 Turn: {current_player}")
 
 last_tile = st.session_state.board[-1] if st.session_state.board else None
 
 valid_indices = [
-    i for i, t in enumerate(player_data["hand"])
+    i for i, t in enumerate(player["hand"])
     if is_valid_move(t, last_tile)
 ]
 
-# ---------- PASS TURN IF NO MOVE ----------
+# ---------- PASO AUTOMÁTICO ----------
 
 if not valid_indices:
-    st.warning("No valid conceptual move available. Turn passes automatically.")
+    st.warning("No valid conceptual move. Turn passes automatically.")
     st.session_state.turn_index = (
         st.session_state.turn_index + 1
     ) % len(st.session_state.player_order)
     st.stop()
 
-# ---------- SELECT TILE ----------
+# ---------- SELECCIÓN DE FICHA ----------
 
 idx = st.selectbox(
     "Select a tile to play:",
@@ -202,7 +214,7 @@ idx = st.selectbox(
     format_func=lambda i: f"Tile {i + 1}"
 )
 
-selected_tile = player_data["hand"][idx]
+selected_tile = player["hand"][idx]
 render_domino(selected_tile)
 
 if st.button("Rotate tile"):
@@ -211,23 +223,23 @@ if st.button("Rotate tile"):
         else "horizontal"
     )
 
-# ---------- JUSTIFICATION ----------
+# ---------- JUSTIFICACIÓN ----------
 
 justification = st.text_area(
     "✍️ Conceptual justification (required):",
     placeholder="Explain why this tile matches the conceptual meaning on the board."
 )
 
-# ---------- PLAY ----------
+# ---------- JUGAR ----------
 
 if st.button("Play tile"):
     if not justification.strip():
         st.error("Justification is mandatory.")
         st.stop()
 
-    player_data["hand"].pop(idx)
+    player["hand"].pop(idx)
     st.session_state.board.append(selected_tile)
-    player_data["score"] += 4
+    player["score"] += 4
 
     st.success(
         f"✔ Concept matched: "
@@ -238,7 +250,7 @@ if st.button("Play tile"):
         st.session_state.turn_index + 1
     ) % len(st.session_state.player_order)
 
-# ---------- SCORES ----------
+# ---------- MARCADOR ----------
 
 st.subheader("📊 Scores")
 for p, data in st.session_state.players.items():
