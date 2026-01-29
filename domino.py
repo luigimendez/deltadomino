@@ -4,16 +4,16 @@ from docx import Document
 import random
 import openai
 
-# ===============================
+# ======================================================
 # CONFIGURACIÓN GENERAL
-# ===============================
+# ======================================================
 
 PDF_FILE = "tiles.pdf"
 DOCX_FILE = "rules.docx"
 
-# ===============================
-# MODO DUAL IA / NO IA
-# ===============================
+# ======================================================
+# MODO IA / FALLBACK
+# ======================================================
 
 USE_AI = True
 
@@ -21,23 +21,17 @@ if "OPENAI_API_KEY" not in st.secrets:
     USE_AI = False
     st.warning(
         "⚠️ OPENAI_API_KEY not found.\n"
-        "Running in non-AI mode (concepts inferred textually)."
+        "Running in fallback mode (text-based conceptual matching)."
     )
 else:
     openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-# ===============================
+# ======================================================
 # IA: INFERENCIA DE CONCEPTOS
-# ===============================
+# ======================================================
 
 def infer_concept(expr):
-    """
-    Returns a conceptual label for a mathematical expression.
-    Uses AI if available, otherwise a deterministic fallback.
-    """
-
     if not USE_AI:
-        # Fallback estable y reproducible
         return expr.lower().strip()[:50]
 
     if "concept_cache" not in st.session_state:
@@ -68,9 +62,9 @@ derivative, limit, continuity, chain rule, gradient, integral
     st.session_state.concept_cache[expr] = concept
     return concept
 
-# ===============================
+# ======================================================
 # CARGA DE ARCHIVOS
-# ===============================
+# ======================================================
 
 def load_tiles_from_pdf(path):
     tiles = []
@@ -98,24 +92,56 @@ def load_rules_from_docx(path):
     doc = Document(path)
     return [p.text.strip() for p in doc.paragraphs if p.text.strip()]
 
-# ===============================
-# LÓGICA DEL JUEGO
-# ===============================
+# ======================================================
+# TABLERO CONCEPTUAL
+# ======================================================
 
-def is_valid_move(tile, last_tile):
-    if last_tile is None:
-        return True
+def init_board():
+    return {
+        "tiles": [],
+        "left_concept": None,
+        "right_concept": None
+    }
 
-    return (
-        tile["a_concept"] == last_tile["a_concept"]
-        or tile["a_concept"] == last_tile["b_concept"]
-        or tile["b_concept"] == last_tile["a_concept"]
-        or tile["b_concept"] == last_tile["b_concept"]
+
+def place_tile_on_board(tile, side):
+    board = st.session_state.board
+
+    if not board["tiles"]:
+        board["tiles"].append(tile)
+        board["left_concept"] = tile["a_concept"]
+        board["right_concept"] = tile["b_concept"]
+        return True, "First tile placed"
+
+    if side == "left":
+        if tile["a_concept"] == board["left_concept"]:
+            board["tiles"].insert(0, tile)
+            board["left_concept"] = tile["b_concept"]
+            return True, f"Matched left concept: {tile['a_concept']}"
+        if tile["b_concept"] == board["left_concept"]:
+            board["tiles"].insert(0, tile)
+            board["left_concept"] = tile["a_concept"]
+            return True, f"Matched left concept: {tile['b_concept']}"
+
+    if side == "right":
+        if tile["a_concept"] == board["right_concept"]:
+            board["tiles"].append(tile)
+            board["right_concept"] = tile["b_concept"]
+            return True, f"Matched right concept: {tile['a_concept']}"
+        if tile["b_concept"] == board["right_concept"]:
+            board["tiles"].append(tile)
+            board["right_concept"] = tile["a_concept"]
+            return True, f"Matched right concept: {tile['b_concept']}"
+
+    return False, (
+        f"Concept mismatch. Expected "
+        f"'{board['left_concept']}' (left) or "
+        f"'{board['right_concept']}' (right)."
     )
 
-# ===============================
-# RENDER DE FICHA (STREAMLIT NATIVO)
-# ===============================
+# ======================================================
+# RENDER
+# ======================================================
 
 def render_domino(tile):
     if tile["orientation"] == "horizontal":
@@ -132,17 +158,42 @@ def render_domino(tile):
             st.divider()
             st.latex(tile["b"])
 
-# ===============================
-# STREAMLIT APP
-# ===============================
 
-st.set_page_config(page_title="Conceptual Domino", layout="centered")
-st.title("🧩 Conceptual Domino – Conceptual Matching")
+def render_board():
+    board = st.session_state.board
+
+    if not board["tiles"]:
+        st.info("The board is empty.")
+        return
+
+    st.markdown("### 🧩 Board")
+
+    cols = st.columns(len(board["tiles"]))
+    for col, tile in zip(cols, board["tiles"]):
+        with col:
+            render_domino(tile)
+
+    st.caption(
+        f"⬅️ Left concept: **{board['left_concept']}** | "
+        f"Right concept: **{board['right_concept']}** ➡️"
+    )
+
+# ======================================================
+# APP
+# ======================================================
+
+st.set_page_config(page_title="Conceptual Domino", layout="wide")
+st.title("🧩 Conceptual Domino – AI & Conceptual Reasoning")
+
+# ---------- MODO PROFESOR ----------
+
+professor_mode = st.sidebar.checkbox("👨‍🏫 Professor mode (full visibility)")
 
 # ---------- SETUP ----------
 
 if "initialized" not in st.session_state:
     st.subheader("⚙️ Game Setup")
+
     num_players = st.radio("Number of players:", [2, 4], horizontal=True)
 
     if st.button("Start Game"):
@@ -150,54 +201,63 @@ if "initialized" not in st.session_state:
         rules = load_rules_from_docx(DOCX_FILE)
 
         random.shuffle(tiles)
-        tiles_per_player = 14 if num_players == 2 else 7
+        tiles_per = 14 if num_players == 2 else 7
 
         players = {}
         for i in range(num_players):
             players[f"Player {i+1}"] = {
-                "hand": tiles[i * tiles_per_player:(i + 1) * tiles_per_player],
+                "hand": tiles[i * tiles_per:(i + 1) * tiles_per],
                 "score": 0
             }
 
         st.session_state.players = players
         st.session_state.player_order = list(players.keys())
         st.session_state.turn_index = 0
-        st.session_state.board = []
+        st.session_state.board = init_board()
         st.session_state.rules = rules
         st.session_state.initialized = True
 
     st.stop()
 
-# ---------- RULES ----------
+# ---------- REGLAS ----------
 
 with st.expander("📘 Game Rules"):
     for rule in st.session_state.rules:
         st.write("•", rule)
 
-# ---------- BOARD ----------
+# ---------- TABLERO ----------
 
-st.subheader("🧠 Board")
-if not st.session_state.board:
-    st.info("No tiles placed yet.")
-else:
-    for tile in st.session_state.board:
-        render_domino(tile)
+render_board()
 
-# ---------- TURNO ACTUAL ----------
+# ---------- TURNO ----------
 
 current_player = st.session_state.player_order[st.session_state.turn_index]
 player = st.session_state.players[current_player]
 
 st.subheader(f"🎮 Turn: {current_player}")
 
-last_tile = st.session_state.board[-1] if st.session_state.board else None
+# ---------- MODO PROFESOR: VER TODO ----------
 
-valid_indices = [
-    i for i, t in enumerate(player["hand"])
-    if is_valid_move(t, last_tile)
-]
+if professor_mode:
+    st.markdown("### 👀 Professor View – All Hands")
+    for p, data in st.session_state.players.items():
+        st.markdown(f"**{p}**")
+        for tile in data["hand"]:
+            render_domino(tile)
 
-# ---------- PASO AUTOMÁTICO ----------
+# ---------- MOVIMIENTOS VÁLIDOS ----------
+
+board = st.session_state.board
+
+valid_indices = []
+for i, t in enumerate(player["hand"]):
+    if not board["tiles"]:
+        valid_indices.append(i)
+    elif (
+        t["a_concept"] in [board["left_concept"], board["right_concept"]] or
+        t["b_concept"] in [board["left_concept"], board["right_concept"]]
+    ):
+        valid_indices.append(i)
 
 if not valid_indices:
     st.warning("No valid conceptual move. Turn passes automatically.")
@@ -206,28 +266,32 @@ if not valid_indices:
     ) % len(st.session_state.player_order)
     st.stop()
 
-# ---------- SELECCIÓN DE FICHA ----------
+# ---------- SELECCIÓN ----------
 
 idx = st.selectbox(
-    "Select a tile to play:",
+    "Select a tile:",
     valid_indices,
-    format_func=lambda i: f"Tile {i + 1}"
+    format_func=lambda i: f"Tile {i+1}"
 )
 
-selected_tile = player["hand"][idx]
-render_domino(selected_tile)
+tile = player["hand"][idx]
+render_domino(tile)
 
 if st.button("Rotate tile"):
-    selected_tile["orientation"] = (
-        "vertical" if selected_tile["orientation"] == "horizontal"
+    tile["orientation"] = (
+        "vertical" if tile["orientation"] == "horizontal"
         else "horizontal"
     )
 
-# ---------- JUSTIFICACIÓN ----------
+placement_side = st.radio(
+    "Place tile on:",
+    ["left", "right"],
+    horizontal=True
+)
 
 justification = st.text_area(
     "✍️ Conceptual justification (required):",
-    placeholder="Explain why this tile matches the conceptual meaning on the board."
+    placeholder="Explain why this tile matches the concept at the selected board end."
 )
 
 # ---------- JUGAR ----------
@@ -237,20 +301,23 @@ if st.button("Play tile"):
         st.error("Justification is mandatory.")
         st.stop()
 
+    success, feedback = place_tile_on_board(tile, placement_side)
+
+    if not success:
+        st.error(f"❌ {feedback}")
+        st.info("💡 Tip: Check the conceptual label expected at that end of the board.")
+        st.stop()
+
     player["hand"].pop(idx)
-    st.session_state.board.append(selected_tile)
     player["score"] += 4
 
-    st.success(
-        f"✔ Concept matched: "
-        f"{selected_tile['a_concept']} / {selected_tile['b_concept']}"
-    )
+    st.success(f"✔ {feedback}")
 
     st.session_state.turn_index = (
         st.session_state.turn_index + 1
     ) % len(st.session_state.player_order)
 
-# ---------- MARCADOR ----------
+# ---------- SCORES ----------
 
 st.subheader("📊 Scores")
 for p, data in st.session_state.players.items():
