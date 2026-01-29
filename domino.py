@@ -14,6 +14,13 @@ DOCX_FILE = "rules.docx"
 # DATA LOADING
 # ===============================
 
+def normalize_latex(text):
+    text = text.strip()
+    if text.startswith("$") and text.endswith("$"):
+        return text
+    return f"$${text}$$"
+
+
 def load_tiles_from_pdf(path):
     tiles = []
     with pdfplumber.open(path) as pdf:
@@ -34,17 +41,6 @@ def load_tiles_from_pdf(path):
 def load_rules_from_docx(path):
     doc = Document(path)
     return [p.text.strip() for p in doc.paragraphs if p.text.strip()]
-
-
-def normalize_latex(text):
-    """
-    Ensures text is rendered as LaTeX when possible.
-    If already wrapped, keep it.
-    """
-    if text.startswith("$") and text.endswith("$"):
-        return text
-    # heuristic: wrap math-like content
-    return f"${text}$"
 
 # ===============================
 # GAME LOGIC
@@ -69,51 +65,46 @@ def score_update(first_attempt, valid):
     return 0
 
 # ===============================
-# DOMINO RENDER (LaTeX SAFE)
+# DOMINO RENDER (TRUE DOMINO)
 # ===============================
 
 def render_domino(tile):
-    col1, col2 = st.columns([1, 1])
-
-    with col1:
-        st.markdown(
-            """
-            <div style="
-                border:2px solid black;
-                border-right:none;
-                border-radius:12px 0 0 12px;
-                padding:12px;
-                min-height:110px;
-                background-color:white;
-                display:flex;
-                align-items:center;
-                justify-content:center;
-            ">
-            """,
-            unsafe_allow_html=True
-        )
-        st.latex(tile["a"])
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with col2:
-        st.markdown(
-            """
-            <div style="
-                border:2px solid black;
-                border-left:none;
-                border-radius:0 12px 12px 0;
-                padding:12px;
-                min-height:110px;
-                background-color:white;
-                display:flex;
-                align-items:center;
-                justify-content:center;
-            ">
-            """,
-            unsafe_allow_html=True
-        )
-        st.latex(tile["b"])
-        st.markdown("</div>", unsafe_allow_html=True)
+    html = f"""
+    <div style="
+        display:flex;
+        width:300px;
+        height:130px;
+        border:2px solid black;
+        border-radius:14px;
+        background-color:white;
+        box-shadow:2px 2px 6px rgba(0,0,0,0.25);
+        margin:10px 0;
+        overflow:hidden;
+    ">
+        <div style="
+            width:50%;
+            border-right:2px solid black;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            padding:10px;
+            text-align:center;
+        ">
+            {tile['a']}
+        </div>
+        <div style="
+            width:50%;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            padding:10px;
+            text-align:center;
+        ">
+            {tile['b']}
+        </div>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
 
 # ===============================
 # STREAMLIT APP
@@ -194,14 +185,10 @@ if not hand:
 
 st.write("Your tiles:")
 
-labels = [f"{t['a']} ↔ {t['b']}" for t in hand]
-index = st.selectbox(
-    "Select a tile to play:",
-    range(len(labels)),
-    format_func=lambda i: labels[i]
-)
-
+labels = [f"Tile {i+1}" for i in range(len(hand))]
+index = st.selectbox("Select a tile to play:", range(len(labels)))
 selected_tile = hand[index]
+
 render_domino(selected_tile)
 
 # ---------- PLAY ACTION ----------
