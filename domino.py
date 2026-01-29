@@ -4,7 +4,7 @@ from docx import Document
 import random
 
 # ===============================
-# FILES (must be in repo root)
+# FILES (repo root)
 # ===============================
 
 PDF_FILE = "tiles.pdf"
@@ -25,8 +25,8 @@ def load_tiles_from_pdf(path):
             for i in range(0, len(lines) - 1, 2):
                 tiles.append({
                     "id": len(tiles),
-                    "a": lines[i],
-                    "b": lines[i + 1]
+                    "a": normalize_latex(lines[i]),
+                    "b": normalize_latex(lines[i + 1])
                 })
     return tiles
 
@@ -34,6 +34,17 @@ def load_tiles_from_pdf(path):
 def load_rules_from_docx(path):
     doc = Document(path)
     return [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+
+
+def normalize_latex(text):
+    """
+    Ensures text is rendered as LaTeX when possible.
+    If already wrapped, keep it.
+    """
+    if text.startswith("$") and text.endswith("$"):
+        return text
+    # heuristic: wrap math-like content
+    return f"${text}$"
 
 # ===============================
 # GAME LOGIC
@@ -43,10 +54,10 @@ def is_valid_move(tile, last_tile):
     if last_tile is None:
         return True
     return (
-        tile["a"] == last_tile["a"] or
-        tile["a"] == last_tile["b"] or
-        tile["b"] == last_tile["a"] or
-        tile["b"] == last_tile["b"]
+        tile["a"] == last_tile["a"]
+        or tile["a"] == last_tile["b"]
+        or tile["b"] == last_tile["a"]
+        or tile["b"] == last_tile["b"]
     )
 
 
@@ -58,48 +69,51 @@ def score_update(first_attempt, valid):
     return 0
 
 # ===============================
-# DOMINO VISUAL
+# DOMINO RENDER (LaTeX SAFE)
 # ===============================
 
 def render_domino(tile):
-    html = f"""
-    <div style="
-        display:flex;
-        width:260px;
-        height:110px;
-        border:2px solid black;
-        border-radius:12px;
-        margin:8px;
-        background-color:white;
-        font-family:Arial;
-        box-shadow:2px 2px 5px rgba(0,0,0,0.2);
-    ">
-        <div style="
-            width:50%;
-            border-right:2px solid black;
-            padding:6px;
-            font-size:13px;
-            text-align:center;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-        ">
-            {tile['a']}
-        </div>
-        <div style="
-            width:50%;
-            padding:6px;
-            font-size:13px;
-            text-align:center;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-        ">
-            {tile['b']}
-        </div>
-    </div>
-    """
-    st.markdown(html, unsafe_allow_html=True)
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        st.markdown(
+            """
+            <div style="
+                border:2px solid black;
+                border-right:none;
+                border-radius:12px 0 0 12px;
+                padding:12px;
+                min-height:110px;
+                background-color:white;
+                display:flex;
+                align-items:center;
+                justify-content:center;
+            ">
+            """,
+            unsafe_allow_html=True
+        )
+        st.latex(tile["a"])
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with col2:
+        st.markdown(
+            """
+            <div style="
+                border:2px solid black;
+                border-left:none;
+                border-radius:0 12px 12px 0;
+                padding:12px;
+                min-height:110px;
+                background-color:white;
+                display:flex;
+                align-items:center;
+                justify-content:center;
+            ">
+            """,
+            unsafe_allow_html=True
+        )
+        st.latex(tile["b"])
+        st.markdown("</div>", unsafe_allow_html=True)
 
 # ===============================
 # STREAMLIT APP
@@ -108,7 +122,7 @@ def render_domino(tile):
 st.set_page_config(page_title="Conceptual Domino – Calculus", layout="centered")
 st.title("🧩 Conceptual Domino – Calculus")
 
-# -------- GAME SETUP --------
+# ---------- GAME SETUP ----------
 
 if "setup_done" not in st.session_state:
 
@@ -123,6 +137,11 @@ if "setup_done" not in st.session_state:
     if st.button("🎮 Start Game"):
         tiles = load_tiles_from_pdf(PDF_FILE)
         rules = load_rules_from_docx(DOCX_FILE)
+
+        if len(tiles) != 28:
+            st.error("The game requires exactly 28 tiles.")
+            st.stop()
+
         random.shuffle(tiles)
 
         tiles_per_player = 14 if num_players == 2 else 7
@@ -130,7 +149,7 @@ if "setup_done" not in st.session_state:
         players = {}
         for i in range(num_players):
             players[f"Player {i+1}"] = {
-                "hand": tiles[i*tiles_per_player:(i+1)*tiles_per_player],
+                "hand": tiles[i * tiles_per_player:(i + 1) * tiles_per_player],
                 "score": 0
             }
 
@@ -144,13 +163,13 @@ if "setup_done" not in st.session_state:
 
     st.stop()
 
-# -------- RULES --------
+# ---------- RULES ----------
 
 with st.expander("📘 Game Rules"):
     for rule in st.session_state.rules:
         st.write("•", rule)
 
-# -------- BOARD --------
+# ---------- BOARD ----------
 
 st.subheader("🧠 Board")
 
@@ -160,7 +179,7 @@ else:
     for tile in st.session_state.board:
         render_domino(tile)
 
-# -------- PLAYER TURN --------
+# ---------- PLAYER TURN ----------
 
 player = st.session_state.current_player
 hand = st.session_state.players[player]["hand"]
@@ -171,17 +190,21 @@ if not hand:
     st.success(f"🏆 {player} wins by using all tiles!")
     st.stop()
 
-# -------- PLAYER HAND --------
+# ---------- PLAYER HAND ----------
 
 st.write("Your tiles:")
 
 labels = [f"{t['a']} ↔ {t['b']}" for t in hand]
-index = st.selectbox("Select a tile to play:", range(len(labels)), format_func=lambda i: labels[i])
-selected_tile = hand[index]
+index = st.selectbox(
+    "Select a tile to play:",
+    range(len(labels)),
+    format_func=lambda i: labels[i]
+)
 
+selected_tile = hand[index]
 render_domino(selected_tile)
 
-# -------- PLAY ACTION --------
+# ---------- PLAY ACTION ----------
 
 if st.button("Play tile"):
     last_tile = st.session_state.board[-1] if st.session_state.board else None
@@ -197,13 +220,15 @@ if st.button("Play tile"):
 
         players = list(st.session_state.players.keys())
         idx = players.index(player)
-        st.session_state.current_player = players[(idx + 1) % st.session_state.num_players]
+        st.session_state.current_player = players[
+            (idx + 1) % st.session_state.num_players
+        ]
     else:
         st.session_state.players[player]["score"] += delta
         st.error(f"✖ Invalid move ({delta})")
         st.session_state.first_attempt = False
 
-# -------- SCORES --------
+# ---------- SCORES ----------
 
 st.subheader("📊 Scores")
 for p, data in st.session_state.players.items():
