@@ -2,9 +2,49 @@ import streamlit as st
 import pdfplumber
 from docx import Document
 import random
+import openai
+
+# ===============================
+# CONFIG
+# ===============================
 
 PDF_FILE = "tiles.pdf"
 DOCX_FILE = "rules.docx"
+
+openai.api_key = st.secrets["OPENAI_API_KEY"]
+
+# ===============================
+# IA CONCEPT INFERENCE
+# ===============================
+
+def infer_concept(latex_expr):
+    if "concept_cache" not in st.session_state:
+        st.session_state.concept_cache = {}
+
+    if latex_expr in st.session_state.concept_cache:
+        return st.session_state.concept_cache[latex_expr]
+
+    prompt = f"""
+You are a mathematics education expert.
+Given the following mathematical expression, return ONLY the main underlying concept
+as a single lowercase word or short phrase (no explanation).
+
+Expression:
+{latex_expr}
+
+Examples of concepts:
+derivative, limit, continuity, integral, chain rule, optimization, series, vector, gradient
+"""
+
+    response = openai.ChatCompletion.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0
+    )
+
+    concept = response.choices[0].message["content"].strip().lower()
+    st.session_state.concept_cache[latex_expr] = concept
+    return concept
 
 # ===============================
 # LOADERS
@@ -19,10 +59,14 @@ def load_tiles_from_pdf(path):
                 continue
             lines = [l.strip() for l in text.split("\n") if l.strip()]
             for i in range(0, len(lines) - 1, 2):
+                a = lines[i]
+                b = lines[i + 1]
                 tiles.append({
                     "id": len(tiles),
-                    "a": lines[i],
-                    "b": lines[i + 1],
+                    "a": a,
+                    "b": b,
+                    "a_concept": infer_concept(a),
+                    "b_concept": infer_concept(b),
                     "orientation": "horizontal"
                 })
     return tiles
@@ -39,20 +83,21 @@ def load_rules_from_docx(path):
 def is_valid_move(tile, last_tile):
     if last_tile is None:
         return True
+
     return (
-        tile["a"] == last_tile["a"]
-        or tile["a"] == last_tile["b"]
-        or tile["b"] == last_tile["a"]
-        or tile["b"] == last_tile["b"]
+        tile["a_concept"] == last_tile["a_concept"]
+        or tile["a_concept"] == last_tile["b_concept"]
+        or tile["b_concept"] == last_tile["a_concept"]
+        or tile["b_concept"] == last_tile["b_concept"]
     )
 
 # ===============================
-# DOMINO RENDER (STREAMLIT-NATIVE)
+# DOMINO RENDER
 # ===============================
 
 def render_domino(tile):
     if tile["orientation"] == "horizontal":
-        c1, c2 = st.columns([1, 1])
+        c1, c2 = st.columns(2)
         with c1:
             st.container(border=True)
             st.latex(tile["a"])
@@ -66,11 +111,11 @@ def render_domino(tile):
         st.latex(tile["b"])
 
 # ===============================
-# STREAMLIT APP
+# APP
 # ===============================
 
 st.set_page_config("Conceptual Domino", layout="centered")
-st.title("🧩 Conceptual Domino – Calculus")
+st.title("🧩 Conceptual Domino – AI-driven")
 
 # ---------- SETUP ----------
 
@@ -110,57 +155,57 @@ with st.expander("📘 Game Rules"):
 # ---------- BOARD ----------
 
 st.subheader("🧠 Board")
-if not st.session_state.board:
-    st.info("No tiles placed yet.")
-else:
-    for t in st.session_state.board:
-        render_domino(t)
+for t in st.session_state.board:
+    render_domino(t)
 
-# ---------- CURRENT PLAYER ----------
+# ---------- TURN ----------
 
 current = st.session_state.order[st.session_state.turn]
 player = st.session_state.players[current]
 
 st.subheader(f"🎮 Turn: {current}")
 
-# ---------- CHECK IF PLAYER CAN PLAY ----------
+# ---------- VALID MOVES ----------
+
+last = st.session_state.board[-1] if st.session_state.board else None
 
 valid_indices = [
     i for i, t in enumerate(player["hand"])
-    if is_valid_move(t, st.session_state.board[-1] if st.session_state.board else None)
+    if is_valid_move(t, last)
 ]
 
 if not valid_indices:
-    st.warning("No valid tiles available. Turn passes automatically.")
+    st.warning("No valid conceptual move. Turn passes automatically.")
     st.session_state.turn = (st.session_state.turn + 1) % len(st.session_state.order)
     st.stop()
 
-# ---------- PLAYER HAND ----------
+# ---------- HAND ----------
 
-for i, tile in enumerate(player["hand"]):
-    st.markdown(f"**Tile {i+1}**")
-    render_domino(tile)
+idx = st.selectbox(
+    "Select tile to play:",
+    valid_indices,
+    format_func=lambda i: f"Tile {i+1}"
+)
 
-    if st.button("Rotate", key=f"rot{i}"):
-        tile["orientation"] = (
-            "vertical" if tile["orientation"] == "horizontal"
-            else "horizontal"
-        )
+tile = player["hand"][idx]
+render_domino(tile)
 
-# ---------- PLAY ----------
-
-idx = st.selectbox("Select tile:", valid_indices)
+if st.button("Rotate tile"):
+    tile["orientation"] = (
+        "vertical" if tile["orientation"] == "horizontal"
+        else "horizontal"
+    )
 
 justification = st.text_area(
-    "✍️ Justify your move (conceptual explanation required):"
+    "✍️ Conceptual justification (mandatory):"
 )
 
 if st.button("Play tile"):
     if not justification.strip():
-        st.error("Justification is mandatory.")
+        st.error("Justification required.")
         st.stop()
 
-    tile = player["hand"].pop(idx)
+    player["hand"].pop(idx)
     st.session_state.board.append(tile)
     player["score"] += 4
 
@@ -168,7 +213,9 @@ if st.button("Play tile"):
         st.session_state.turn + 1
     ) % len(st.session_state.order)
 
-    st.success("✔ Move registered")
+    st.success(
+        f"✔ Concept matched: {tile['a_concept']} / {tile['b_concept']}"
+    )
 
 # ---------- SCORES ----------
 
