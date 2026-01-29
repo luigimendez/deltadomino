@@ -3,13 +3,16 @@ import pdfplumber
 from docx import Document
 import random
 
-# =====================================
-# LOAD DATA FROM REPOSITORY FILES
-# =====================================
+# ===============================
+# FILES (must be in repo root)
+# ===============================
 
-PDF_FILE = "Formato fichas (inglés) - estudiantes.pdf"
-DOCX_FILE = "Reglas del juego.docx"
+PDF_FILE = "tiles.pdf"
+DOCX_FILE = "rules.docx"
 
+# ===============================
+# DATA LOADING
+# ===============================
 
 def load_tiles_from_pdf(path):
     tiles = []
@@ -32,10 +35,9 @@ def load_rules_from_docx(path):
     doc = Document(path)
     return [p.text.strip() for p in doc.paragraphs if p.text.strip()]
 
-
-# =====================================
+# ===============================
 # GAME LOGIC
-# =====================================
+# ===============================
 
 def is_valid_move(tile, last_tile):
     if last_tile is None:
@@ -55,50 +57,110 @@ def score_update(first_attempt, valid):
         return -2
     return 0
 
+# ===============================
+# DOMINO VISUAL
+# ===============================
 
-# =====================================
+def render_domino(tile):
+    html = f"""
+    <div style="
+        display:flex;
+        width:260px;
+        height:110px;
+        border:2px solid black;
+        border-radius:12px;
+        margin:8px;
+        background-color:white;
+        font-family:Arial;
+        box-shadow:2px 2px 5px rgba(0,0,0,0.2);
+    ">
+        <div style="
+            width:50%;
+            border-right:2px solid black;
+            padding:6px;
+            font-size:13px;
+            text-align:center;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+        ">
+            {tile['a']}
+        </div>
+        <div style="
+            width:50%;
+            padding:6px;
+            font-size:13px;
+            text-align:center;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+        ">
+            {tile['b']}
+        </div>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+# ===============================
 # STREAMLIT APP
-# =====================================
+# ===============================
 
 st.set_page_config(page_title="Conceptual Domino – Calculus", layout="centered")
 st.title("🧩 Conceptual Domino – Calculus")
 
-if "initialized" not in st.session_state:
-    tiles = load_tiles_from_pdf(PDF_FILE)
-    rules = load_rules_from_docx(DOCX_FILE)
+# -------- GAME SETUP --------
 
-    random.shuffle(tiles)
+if "setup_done" not in st.session_state:
 
-    st.session_state.players = {
-        "Player 1": {"hand": tiles[0:7], "score": 0},
-        "Player 2": {"hand": tiles[7:14], "score": 0},
-        "Player 3": {"hand": tiles[14:21], "score": 0},
-        "Player 4": {"hand": tiles[21:28], "score": 0},
-    }
+    st.subheader("⚙️ Game Setup")
 
-    st.session_state.current_player = "Player 1"
-    st.session_state.board = []
-    st.session_state.first_attempt = True
-    st.session_state.rules = rules
-    st.session_state.initialized = True
+    num_players = st.radio(
+        "Select number of players:",
+        options=[2, 4],
+        horizontal=True
+    )
 
+    if st.button("🎮 Start Game"):
+        tiles = load_tiles_from_pdf(PDF_FILE)
+        rules = load_rules_from_docx(DOCX_FILE)
+        random.shuffle(tiles)
 
-# =====================================
-# UI
-# =====================================
+        tiles_per_player = 14 if num_players == 2 else 7
+
+        players = {}
+        for i in range(num_players):
+            players[f"Player {i+1}"] = {
+                "hand": tiles[i*tiles_per_player:(i+1)*tiles_per_player],
+                "score": 0
+            }
+
+        st.session_state.players = players
+        st.session_state.num_players = num_players
+        st.session_state.current_player = "Player 1"
+        st.session_state.board = []
+        st.session_state.first_attempt = True
+        st.session_state.rules = rules
+        st.session_state.setup_done = True
+
+    st.stop()
+
+# -------- RULES --------
 
 with st.expander("📘 Game Rules"):
     for rule in st.session_state.rules:
         st.write("•", rule)
 
+# -------- BOARD --------
 
 st.subheader("🧠 Board")
+
 if not st.session_state.board:
     st.info("No tiles placed yet.")
 else:
-    for t in st.session_state.board:
-        st.markdown(f"**{t['a']} ↔ {t['b']}**")
+    for tile in st.session_state.board:
+        render_domino(tile)
 
+# -------- PLAYER TURN --------
 
 player = st.session_state.current_player
 hand = st.session_state.players[player]["hand"]
@@ -109,30 +171,39 @@ if not hand:
     st.success(f"🏆 {player} wins by using all tiles!")
     st.stop()
 
+# -------- PLAYER HAND --------
+
+st.write("Your tiles:")
+
 labels = [f"{t['a']} ↔ {t['b']}" for t in hand]
-index = st.selectbox("Select a tile:", range(len(labels)), format_func=lambda i: labels[i])
-tile = hand[index]
+index = st.selectbox("Select a tile to play:", range(len(labels)), format_func=lambda i: labels[i])
+selected_tile = hand[index]
+
+render_domino(selected_tile)
+
+# -------- PLAY ACTION --------
 
 if st.button("Play tile"):
     last_tile = st.session_state.board[-1] if st.session_state.board else None
-    valid = is_valid_move(tile, last_tile)
+    valid = is_valid_move(selected_tile, last_tile)
     delta = score_update(st.session_state.first_attempt, valid)
 
     if valid:
-        st.session_state.board.append(tile)
-        hand.remove(tile)
+        st.session_state.board.append(selected_tile)
+        hand.remove(selected_tile)
         st.session_state.players[player]["score"] += delta
         st.success(f"✔ Valid move (+{delta})")
         st.session_state.first_attempt = True
 
         players = list(st.session_state.players.keys())
         idx = players.index(player)
-        st.session_state.current_player = players[(idx + 1) % 4]
+        st.session_state.current_player = players[(idx + 1) % st.session_state.num_players]
     else:
         st.session_state.players[player]["score"] += delta
         st.error(f"✖ Invalid move ({delta})")
         st.session_state.first_attempt = False
 
+# -------- SCORES --------
 
 st.subheader("📊 Scores")
 for p, data in st.session_state.players.items():
